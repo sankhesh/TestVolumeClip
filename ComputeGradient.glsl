@@ -42,12 +42,16 @@ vec4 computeGradient(in vec3 texPos,
     if (dot(vec3(g1ObjDataPos.xyz - planeOrigin), planeNormal) < 0)
     {
       // Clipping required. Set the gradient to a high value
-      g1 = vec3(1000.0);
+      // return vec4(vec3(0.5),-1.0);
+
+      return vec4(planeNormal, 0.5);
     }
     if (dot(vec3(g2ObjDataPos.xyz - planeOrigin), planeNormal) < 0)
     {
       // Clipping required. Set the gradient to a high value
-      g2 = vec3(-1000.0);
+      // return vec4(vec3(0.5),-1.0);
+      return vec4(planeNormal, 0.5);
+      // g2 = vec3(0.0);
     }
   }
 

@@ -6,12 +6,15 @@
 #include <vtkCommand.h>
 #include <vtkGPUVolumeRayCastMapper.h>
 #include <vtkImageData.h>
+#include <vtkInteractorStyleTrackballCamera.h>
 #include <vtkNew.h>
+#include <vtkObjectFactory.h>
 #include <vtkOpenGLGPUVolumeRayCastMapper.h>
 #include <vtkPiecewiseFunction.h>
 #include <vtkPlane.h>
 #include <vtkPlaneCollection.h>
 #include <vtkPlanes.h>
+#include <vtkProperty.h>
 #include <vtkRenderWindow.h>
 #include <vtkRenderWindowInteractor.h>
 #include <vtkRenderer.h>
@@ -43,10 +46,10 @@ public:
       return;
     }
     vtkBoxWidget2* boxWidget = reinterpret_cast<vtkBoxWidget2*>(caller);
-    vtkBoxRepresentation* rep =
+    vtkBoxRepresentation* boxRep =
       vtkBoxRepresentation::SafeDownCast(boxWidget->GetRepresentation());
     vtkNew<vtkPlanes> boxPlanes;
-    rep->GetPlanes(boxPlanes);
+    boxRep->GetPlanes(boxPlanes);
     vtkNew<vtkPlaneCollection> clippingPlanes;
     for (int i = 0; i < boxPlanes->GetNumberOfPlanes(); ++i)
     {
@@ -60,6 +63,50 @@ public:
   vtkRenderWindowInteractor* Interactor;
 };
 
+class vtkCustomInteractorStyle : public vtkInteractorStyleTrackballCamera
+{
+public:
+  static vtkCustomInteractorStyle* New();
+  vtkTypeMacro(vtkCustomInteractorStyle, vtkInteractorStyleTrackballCamera);
+
+  virtual void OnKeyPress()
+  {
+    // Get the keypress
+    std::string key = this->Interactor->GetKeySym();
+    if (key == "c")
+    {
+      if (this->Replacement)
+      {
+        this->Mapper->ClearAllShaderReplacements();
+        this->Replacement = false;
+      }
+      else
+      {
+        this->Mapper->AddShaderReplacement(vtkShader::Fragment,
+                                           "//VTK::ComputeGradient::Dec",
+                                           true,
+                                           ComputeGradient,
+                                           true);
+        this->Replacement = true;
+      }
+      this->Interactor->Render();
+    }
+
+    // Forward events
+    vtkInteractorStyleTrackballCamera::OnKeyPress();
+  }
+
+  vtkCustomInteractorStyle()
+  {
+    this->Replacement = true;
+    this->Mapper = nullptr;
+  }
+
+  vtkOpenGLGPUVolumeRayCastMapper* Mapper;
+  bool Replacement;
+};
+vtkStandardNewMacro(vtkCustomInteractorStyle);
+
 int main(int argc, char* argv[])
 {
   if (argc < 2)
@@ -71,10 +118,11 @@ int main(int argc, char* argv[])
   vtkNew<vtkXMLImageDataReader> reader;
   reader->SetFileName(argv[1]);
   reader->Update();
+  double* bounds = vtkImageData::SafeDownCast(reader->GetOutput())->GetBounds();
 
   vtkNew<vtkGPUVolumeRayCastMapper> mapper;
   mapper->SetInputConnection(reader->GetOutputPort());
-  mapper->SetUseJittering(1);
+  mapper->SetUseJittering(0);
 
   vtkNew<vtkColorTransferFunction> ctf;
   ctf->AddRGBPoint(-1024, 0.0, 0.0, 0.0);
@@ -97,7 +145,6 @@ int main(int argc, char* argv[])
   volume->SetMapper(mapper);
   volume->SetProperty(prop);
 
-  double* bounds = vtkImageData::SafeDownCast(reader->GetOutput())->GetBounds();
   vtkOpenGLGPUVolumeRayCastMapper* glMapper =
     vtkOpenGLGPUVolumeRayCastMapper::SafeDownCast(mapper);
   glMapper->AddShaderReplacement(vtkShader::Fragment,
@@ -111,10 +158,14 @@ int main(int argc, char* argv[])
   renWin->SetSize(801, 800);
 
   vtkNew<vtkRenderer> ren;
+  ren->SetBackground(0.23, 0.23, 0.33);
   renWin->AddRenderer(ren.GetPointer());
 
   vtkNew<vtkRenderWindowInteractor> iren;
   iren->SetRenderWindow(renWin.GetPointer());
+  vtkNew<vtkCustomInteractorStyle> style;
+  style->Mapper = glMapper;
+  iren->SetInteractorStyle(style);
 
   ren->AddVolume(volume);
   ren->ResetCamera();
@@ -136,6 +187,19 @@ int main(int argc, char* argv[])
   renWin->Render();
 
   boxRep->PlaceWidget(bounds);
+  boxRep->SetPlaceFactor(1.0);
+  vtkProperty* handleProp = boxRep->GetHandleProperty();
+  handleProp->SetColor(0.31, 0.38, 0.56);
+  handleProp->SetAmbient(0.5);
+  handleProp->SetSpecularColor(0.47, 0.53, 0.67);
+  handleProp->SetSpecularPower(100);
+  vtkProperty* selHandleProp = boxRep->GetSelectedHandleProperty();
+  selHandleProp->SetColor(0.6, 0.2, 0.32);
+  selHandleProp->SetAmbient(0.5);
+  selHandleProp->SetSpecularColor(0.9, 0.63, 0.71);
+  selHandleProp->SetSpecularPower(100);
+  vtkProperty* faceProp = boxRep->GetSelectedFaceProperty();
+  faceProp->SetColor(0.5, 0.71, 0.4);
   boxWidget->On();
   cbk->Execute(boxWidget, 0, nullptr);
 
