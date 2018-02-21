@@ -5,8 +5,29 @@ PROJECT(TestVolumeClip)
 find_package(VTK REQUIRED)
 include(${VTK_USE_FILE})
 
+include(${VTK_CMAKE_DIR}/vtkEncodeString.cmake)
+set(shader_files
+  # FragmentShader.glsl
+  ComputeGradient.glsl
+)
+unset(shader_c_files)
+foreach(file ${shader_files})
+  vtk_encode_string(
+    INPUT           "${file}"
+    HEADER_OUTPUT   header
+    SOURCE_OUTPUT   source
+    )
+  list(APPEND shader_c_files ${source})
+endforeach()
+
 add_executable(${PROJECT_NAME} MACOSX_BUNDLE
   ${PROJECT_NAME}.cxx
+  ${shader_c_files}
+  )
+
+include_directories(
+  ${CMAKE_CURRENT_BINARY_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}
   )
 
 if(VTK_LIBRARIES)
