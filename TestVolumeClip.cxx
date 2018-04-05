@@ -21,6 +21,8 @@
 #include <vtkVolume.h>
 #include <vtkVolumeProperty.h>
 #include <vtkXMLImageDataReader.h>
+#include <vtkMatrix4x4.h>
+#include <vtkSmartVolumeMapper.h>
 
 // #include "FragmentShader.h"
 #include "ComputeGradient.h"
@@ -69,41 +71,64 @@ public:
   static vtkCustomInteractorStyle* New();
   vtkTypeMacro(vtkCustomInteractorStyle, vtkInteractorStyleTrackballCamera);
 
-  virtual void OnKeyPress()
-  {
-    // Get the keypress
+  virtual void OnKeyPress() override
+    {
     std::string key = this->Interactor->GetKeySym();
     if (key == "c")
-    {
-      if (this->Replacement)
       {
-        this->Mapper->ClearAllShaderReplacements();
-        this->Replacement = false;
-      }
+      if (this->GPUMapper)
+        {
+        this->Mapper->SetRequestedRenderModeToRayCast();
+        this->GPUMapper = false;
+        }
       else
-      {
-        this->Mapper->AddShaderReplacement(vtkShader::Fragment,
-                                           "//VTK::ComputeGradient::Dec",
-                                           true,
-                                           ComputeGradient,
-                                           true);
-        this->Replacement = true;
-      }
+        {
+        this->Mapper->SetRequestedRenderModeToGPU();
+        this->GPUMapper = true;
+        }
       this->Interactor->Render();
-    }
-
+      }
     // Forward events
     vtkInteractorStyleTrackballCamera::OnKeyPress();
-  }
+    }
+
+  // virtual void OnKeyPress() override
+  // {
+  //   // Get the keypress
+  //   std::string key = this->Interactor->GetKeySym();
+  //   if (key == "c")
+  //   {
+  //     if (this->Replacement)
+  //     {
+  //       // this->Mapper->ClearAllShaderReplacements();
+  //       this->Replacement = false;
+  //     }
+  //     else
+  //     {
+  //       this->Mapper->AddShaderReplacement(vtkShader::Fragment,
+  //                                          "//VTK::ComputeGradient::Dec",
+  //                                          true,
+  //                                          ComputeGradient,
+  //                                          true);
+  //       this->Replacement = true;
+  //     }
+  //     this->Interactor->Render();
+  //   }
+
+  //   // Forward events
+  //   vtkInteractorStyleTrackballCamera::OnKeyPress();
+  // }
 
   vtkCustomInteractorStyle()
   {
-    this->Replacement = true;
+    // this->Replacement = true;
     this->Mapper = nullptr;
+    this->GPUMapper = true;
   }
 
-  vtkOpenGLGPUVolumeRayCastMapper* Mapper;
-  bool Replacement;
+  vtkSmartVolumeMapper* Mapper;
+  // bool Replacement;
+  bool GPUMapper;
 };
 vtkStandardNewMacro(vtkCustomInteractorStyle);
 
@@ -118,11 +143,15 @@ int main(int argc, char* argv[])
   vtkNew<vtkXMLImageDataReader> reader;
   reader->SetFileName(argv[1]);
   reader->Update();
-  double* bounds = vtkImageData::SafeDownCast(reader->GetOutput())->GetBounds();
+  vtkImageData* data = reader->GetOutput();
+  data->SetOrigin(0, 0, 0);
+  data->SetSpacing(1, 1, 1);
+  double* bounds = data->GetBounds();
 
-  vtkNew<vtkGPUVolumeRayCastMapper> mapper;
-  mapper->SetInputConnection(reader->GetOutputPort());
-  mapper->SetUseJittering(0);
+  vtkNew<vtkSmartVolumeMapper> mapper;
+  mapper->SetInputData(data);
+  // mapper->SetInputConnection(reader->GetOutputPort());
+  // mapper->SetUseJittering(0);
 
   vtkNew<vtkColorTransferFunction> ctf;
   ctf->AddRGBPoint(-1024, 0.0, 0.0, 0.0);
@@ -141,17 +170,29 @@ int main(int argc, char* argv[])
   prop->SetScalarOpacity(pf);
   prop->SetShade(1);
 
+  double elements[16] = {
+   -0.933594, 0, 0, 238.533,
+  0, -0.933594, 0, 238.533,
+  0, 0, 1.25, -200,
+  0, 0, 0, 1
+  };
+
+  vtkNew<vtkMatrix4x4> matrix;
+  matrix->DeepCopy(elements);
+
   vtkNew<vtkVolume> volume;
   volume->SetMapper(mapper);
   volume->SetProperty(prop);
+  // volume->PokeMatrix(matrix);
 
-  vtkOpenGLGPUVolumeRayCastMapper* glMapper =
-    vtkOpenGLGPUVolumeRayCastMapper::SafeDownCast(mapper);
-  glMapper->AddShaderReplacement(vtkShader::Fragment,
-                                 "//VTK::ComputeGradient::Dec",
-                                 true,
-                                 ComputeGradient,
-                                 true);
+  // vtkOpenGLGPUVolumeRayCastMapper* glMapper =
+  //   vtkOpenGLGPUVolumeRayCastMapper::SafeDownCast(mapper);
+  // mapper->SetBlendModeToMaximumIntensity();
+  // glMapper->AddShaderReplacement(vtkShader::Fragment,
+  //                                "//VTK::ComputeGradient::Dec",
+  //                                true,
+  //                                ComputeGradient,
+  //                                true);
 
   vtkNew<vtkRenderWindow> renWin;
   renWin->SetMultiSamples(0);
@@ -164,44 +205,54 @@ int main(int argc, char* argv[])
   vtkNew<vtkRenderWindowInteractor> iren;
   iren->SetRenderWindow(renWin.GetPointer());
   vtkNew<vtkCustomInteractorStyle> style;
-  style->Mapper = glMapper;
+  // vtkNew<vtkInteractorStyleTrackballCamera> style;
+  style->Mapper = mapper.GetPointer();
   iren->SetInteractorStyle(style);
 
   ren->AddVolume(volume);
   ren->ResetCamera();
 
-  vtkNew<vtkBoxRepresentation> boxRep;
-  boxRep->InsideOutOn();
-  vtkNew<vtkBoxWidget2> boxWidget;
-  boxWidget->SetRepresentation(boxRep);
-  boxWidget->SetInteractor(iren);
-  vtkNew<vtkBoxCallback> cbk;
-  cbk->Mapper = mapper.GetPointer();
-  cbk->Interactor = iren.GetPointer();
-  boxWidget->AddObserver(vtkCommand::InteractionEvent, cbk);
+  // vtkNew<vtkBoxRepresentation> boxRep;
+  // boxRep->InsideOutOn();
+  // vtkNew<vtkBoxWidget2> boxWidget;
+  // boxWidget->SetRepresentation(boxRep);
+  // boxWidget->SetInteractor(iren);
+  // vtkNew<vtkBoxCallback> cbk;
+  // cbk->Mapper = mapper.GetPointer();
+  // cbk->Interactor = iren.GetPointer();
+  // boxWidget->AddObserver(vtkCommand::InteractionEvent, cbk);
 
-  ren->GetActiveCamera()->Zoom(1.5);
-  ren->GetActiveCamera()->Roll(-70);
-  ren->GetActiveCamera()->Azimuth(90);
+  // ren->GetActiveCamera()->Zoom(1.5);
+  // ren->GetActiveCamera()->Roll(-70);
+  // ren->GetActiveCamera()->Azimuth(90);
+  ren->GetActiveCamera()->SetViewAngle(170);
+  // ren->GetActiveCamera()->SetViewUp(0, 0, 1);
+  // ren->GetActiveCamera()->Dolly(2);
+  // ren->GetActiveCamera()->ParallelProjectionOn();
 
   renWin->Render();
 
-  boxRep->PlaceWidget(bounds);
-  boxRep->SetPlaceFactor(1.0);
-  vtkProperty* handleProp = boxRep->GetHandleProperty();
-  handleProp->SetColor(0.31, 0.38, 0.56);
-  handleProp->SetAmbient(0.5);
-  handleProp->SetSpecularColor(0.47, 0.53, 0.67);
-  handleProp->SetSpecularPower(100);
-  vtkProperty* selHandleProp = boxRep->GetSelectedHandleProperty();
-  selHandleProp->SetColor(0.6, 0.2, 0.32);
-  selHandleProp->SetAmbient(0.5);
-  selHandleProp->SetSpecularColor(0.9, 0.63, 0.71);
-  selHandleProp->SetSpecularPower(100);
-  vtkProperty* faceProp = boxRep->GetSelectedFaceProperty();
-  faceProp->SetColor(0.5, 0.71, 0.4);
-  boxWidget->On();
-  cbk->Execute(boxWidget, 0, nullptr);
+  // double * range = ren->GetActiveCamera()->GetClippingRange();
+  // std::cout << range[0] << " " << range[1] << std::endl;
+  // range[0] = 1.06;//1102.07;
+  // range[1] = 1061;//2038.95;
+  // renWin->Render()
+  // boxRep->PlaceWidget(bounds);
+  // boxRep->SetPlaceFactor(1.0);
+  // vtkProperty* handleProp = boxRep->GetHandleProperty();
+  // handleProp->SetColor(0.31, 0.38, 0.56);
+  // handleProp->SetAmbient(0.5);
+  // handleProp->SetSpecularColor(0.47, 0.53, 0.67);
+  // handleProp->SetSpecularPower(100);
+  // vtkProperty* selHandleProp = boxRep->GetSelectedHandleProperty();
+  // selHandleProp->SetColor(0.6, 0.2, 0.32);
+  // selHandleProp->SetAmbient(0.5);
+  // selHandleProp->SetSpecularColor(0.9, 0.63, 0.71);
+  // selHandleProp->SetSpecularPower(100);
+  // vtkProperty* faceProp = boxRep->GetSelectedFaceProperty();
+  // faceProp->SetColor(0.5, 0.71, 0.4);
+  // boxWidget->On();
+  // cbk->Execute(boxWidget, 0, nullptr);
 
   iren->Start();
 
