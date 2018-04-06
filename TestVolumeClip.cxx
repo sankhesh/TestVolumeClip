@@ -183,7 +183,7 @@ int main(int argc, char* argv[])
   vtkNew<vtkVolume> volume;
   volume->SetMapper(mapper);
   volume->SetProperty(prop);
-  // volume->PokeMatrix(matrix);
+  volume->PokeMatrix(matrix);
 
   // vtkOpenGLGPUVolumeRayCastMapper* glMapper =
   //   vtkOpenGLGPUVolumeRayCastMapper::SafeDownCast(mapper);
@@ -225,7 +225,7 @@ int main(int argc, char* argv[])
   // ren->GetActiveCamera()->Zoom(1.5);
   // ren->GetActiveCamera()->Roll(-70);
   // ren->GetActiveCamera()->Azimuth(90);
-  ren->GetActiveCamera()->SetViewAngle(170);
+  // ren->GetActiveCamera()->SetViewAngle(170);
   // ren->GetActiveCamera()->SetViewUp(0, 0, 1);
   // ren->GetActiveCamera()->Dolly(2);
   // ren->GetActiveCamera()->ParallelProjectionOn();
