@@ -1,6 +1,6 @@
 #include <vtkActor.h>
-#include <vtkBoxRepresentation.h>
-#include <vtkBoxWidget2.h>
+// #include <vtkBoxRepresentation.h>
+// #include <vtkBoxWidget2.h>
 #include <vtkCamera.h>
 #include <vtkColorTransferFunction.h>
 #include <vtkCommand.h>
@@ -11,9 +11,9 @@
 #include <vtkObjectFactory.h>
 #include <vtkOpenGLGPUVolumeRayCastMapper.h>
 #include <vtkPiecewiseFunction.h>
-#include <vtkPlane.h>
-#include <vtkPlaneCollection.h>
-#include <vtkPlanes.h>
+// #include <vtkPlane.h>
+// #include <vtkPlaneCollection.h>
+// #include <vtkPlanes.h>
 #include <vtkProperty.h>
 #include <vtkRenderWindow.h>
 #include <vtkRenderWindowInteractor.h>
@@ -25,45 +25,45 @@
 #include <vtkSmartVolumeMapper.h>
 
 // #include "FragmentShader.h"
-#include "ComputeGradient.h"
+// #include "ComputeGradient.h"
 
-class vtkBoxCallback : public vtkCommand
-{
-public:
-  static vtkBoxCallback* New()
-  {
-    return new vtkBoxCallback;
-  }
+// class vtkBoxCallback : public vtkCommand
+// {
+// public:
+//   static vtkBoxCallback* New()
+//   {
+//     return new vtkBoxCallback;
+//   }
 
-  vtkBoxCallback()
-  {
-    this->Mapper = nullptr;
-    this->Interactor = nullptr;
-  }
+//   vtkBoxCallback()
+//   {
+//     this->Mapper = nullptr;
+//     this->Interactor = nullptr;
+//   }
 
-  virtual void Execute(vtkObject* caller, unsigned long, void*)
-  {
-    if (!this->Mapper || !this->Interactor)
-    {
-      return;
-    }
-    vtkBoxWidget2* boxWidget = reinterpret_cast<vtkBoxWidget2*>(caller);
-    vtkBoxRepresentation* boxRep =
-      vtkBoxRepresentation::SafeDownCast(boxWidget->GetRepresentation());
-    vtkNew<vtkPlanes> boxPlanes;
-    boxRep->GetPlanes(boxPlanes);
-    vtkNew<vtkPlaneCollection> clippingPlanes;
-    for (int i = 0; i < boxPlanes->GetNumberOfPlanes(); ++i)
-    {
-      clippingPlanes->AddItem(boxPlanes->GetPlane(i));
-    }
-    this->Mapper->SetClippingPlanes(boxPlanes);
-    this->Interactor->Render();
-  }
+//   virtual void Execute(vtkObject* caller, unsigned long, void*)
+//   {
+//     if (!this->Mapper || !this->Interactor)
+//     {
+//       return;
+//     }
+//     vtkBoxWidget2* boxWidget = reinterpret_cast<vtkBoxWidget2*>(caller);
+//     vtkBoxRepresentation* boxRep =
+//       vtkBoxRepresentation::SafeDownCast(boxWidget->GetRepresentation());
+//     vtkNew<vtkPlanes> boxPlanes;
+//     boxRep->GetPlanes(boxPlanes.GetPointer());
+//     vtkNew<vtkPlaneCollection> clippingPlanes;
+//     for (int i = 0; i < boxPlanes->GetNumberOfPlanes(); ++i)
+//     {
+//       clippingPlanes->AddItem(boxPlanes->GetPlane(i));
+//     }
+//     this->Mapper->SetClippingPlanes(boxPlanes.GetPointer());
+//     this->Interactor->Render();
+//   }
 
-  vtkGPUVolumeRayCastMapper* Mapper;
-  vtkRenderWindowInteractor* Interactor;
-};
+//   vtkGPUVolumeRayCastMapper* Mapper;
+//   vtkRenderWindowInteractor* Interactor;
+// };
 
 class vtkCustomInteractorStyle : public vtkInteractorStyleTrackballCamera
 {
@@ -87,6 +87,10 @@ public:
         this->GPUMapper = true;
         }
       this->Interactor->Render();
+      }
+    else if (key == "t")
+      {
+      this->Camera->PrintSelf(std::cout, vtkIndent());
       }
     // Forward events
     vtkInteractorStyleTrackballCamera::OnKeyPress();
@@ -129,6 +133,7 @@ public:
   vtkSmartVolumeMapper* Mapper;
   // bool Replacement;
   bool GPUMapper;
+  vtkCamera* Camera;
 };
 vtkStandardNewMacro(vtkCustomInteractorStyle);
 
@@ -166,8 +171,8 @@ int main(int argc, char* argv[])
   pf->AddPoint(419, 1.0);
 
   vtkNew<vtkVolumeProperty> prop;
-  prop->SetColor(ctf);
-  prop->SetScalarOpacity(pf);
+  prop->SetColor(ctf.GetPointer());
+  prop->SetScalarOpacity(pf.GetPointer());
   prop->SetShade(1);
 
   double elements[16] = {
@@ -181,9 +186,9 @@ int main(int argc, char* argv[])
   matrix->DeepCopy(elements);
 
   vtkNew<vtkVolume> volume;
-  volume->SetMapper(mapper);
-  volume->SetProperty(prop);
-  volume->PokeMatrix(matrix);
+  volume->SetMapper(mapper.GetPointer());
+  volume->SetProperty(prop.GetPointer());
+  volume->PokeMatrix(matrix.GetPointer());
 
   // vtkOpenGLGPUVolumeRayCastMapper* glMapper =
   //   vtkOpenGLGPUVolumeRayCastMapper::SafeDownCast(mapper);
@@ -207,10 +212,15 @@ int main(int argc, char* argv[])
   vtkNew<vtkCustomInteractorStyle> style;
   // vtkNew<vtkInteractorStyleTrackballCamera> style;
   style->Mapper = mapper.GetPointer();
-  iren->SetInteractorStyle(style);
+  style->Camera = ren->GetActiveCamera();
+  iren->SetInteractorStyle(style.GetPointer());
 
-  ren->AddVolume(volume);
+  ren->AddVolume(volume.GetPointer());
   ren->ResetCamera();
+  ren->GetActiveCamera()->SetPosition(-181.32, 156.52, 4.2);
+  ren->GetActiveCamera()->SetFocalPoint(-180.74, 154.39, 0);
+  ren->GetActiveCamera()->SetViewUp(0.02, 0.89, -0.45);
+  ren->ResetCameraClippingRange();
 
   // vtkNew<vtkBoxRepresentation> boxRep;
   // boxRep->InsideOutOn();
@@ -225,7 +235,7 @@ int main(int argc, char* argv[])
   // ren->GetActiveCamera()->Zoom(1.5);
   // ren->GetActiveCamera()->Roll(-70);
   // ren->GetActiveCamera()->Azimuth(90);
-  // ren->GetActiveCamera()->SetViewAngle(170);
+  ren->GetActiveCamera()->SetViewAngle(170);
   // ren->GetActiveCamera()->SetViewUp(0, 0, 1);
   // ren->GetActiveCamera()->Dolly(2);
   // ren->GetActiveCamera()->ParallelProjectionOn();
