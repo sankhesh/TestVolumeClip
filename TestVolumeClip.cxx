@@ -184,6 +184,14 @@ int main(int argc, char* argv[])
   ren->GetActiveCamera()->Roll(-70);
   ren->GetActiveCamera()->Azimuth(90);
 
+  // Depth Peeling
+  // renWin->SetAlphaBitPlanes(true);
+  // renWin->SetMultiSamples(0);
+  // ren->SetMaximumNumberOfPeels(20);
+  // ren->SetOcclusionRatio(0.1);
+  // ren->SetUseDepthPeeling(true);
+  // ren->SetUseDepthPeelingForVolumes(true);
+
   renWin->Render();
 
   boxRep->PlaceWidget(bounds);
