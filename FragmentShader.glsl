@@ -1,7 +1,5 @@
 #version 150
 #ifdef GL_ES
-#if __VERSION__ == 300
-#define varying in
 #ifdef GL_FRAGMENT_PRECISION_HIGH
 precision highp float;
 precision highp sampler2D;
@@ -15,22 +13,18 @@ precision mediump sampler3D;
 #define texture1D texture
 #define texture2D texture
 #define texture3D texture
-#endif // 300
-#else  // GL_ES
+#else // GL_ES
 #define highp
 #define mediump
 #define lowp
 #if __VERSION__ == 150
-#define varying in
 #define texelFetchBuffer texelFetch
 #define texture1D texture
 #define texture2D texture
 #define texture3D texture
 #endif
-#if __VERSION__ == 120
-#extension GL_EXT_gpu_shader4 : require
-#endif
 #endif // GL_ES
+#define varying in
 
 /*=========================================================================
 
@@ -54,8 +48,8 @@ precision mediump sampler3D;
 //////////////////////////////////////////////////////////////////////////////
 
 /// 3D texture coordinates form vertex shader
-varying vec3 ip_textureCoords;
-varying vec3 ip_vertexPos;
+in vec3 ip_textureCoords;
+in vec3 ip_vertexPos;
 
 //////////////////////////////////////////////////////////////////////////////
 ///
@@ -71,6 +65,7 @@ vec4 g_fragColor = vec4(0.0);
 ///
 //////////////////////////////////////////////////////////////////////////////
 vec3 g_dataPos;
+vec3 g_terminatePos;
 vec3 g_dirStep;
 vec4 g_srcColor;
 vec4 g_eyePosObj;
@@ -107,7 +102,7 @@ uniform mat4 in_projectionMatrix;
 uniform mat4 in_inverseProjectionMatrix;
 uniform mat4 in_modelViewMatrix;
 uniform mat4 in_inverseModelViewMatrix;
-varying mat4 ip_inverseTextureDataAdjusted;
+in mat4 ip_inverseTextureDataAdjusted;
 
 // Ray step size
 uniform vec3 in_cellStep[1];
@@ -144,22 +139,11 @@ vec3 g_ldir;
 vec3 g_vdir;
 vec3 g_h;
 
-/// We support only 8 clipping planes for now
-/// The first value is the size of the data array for clipping
-/// planes (origin, normal)
-uniform float in_clippingPlanes[49];
-uniform float in_scale;
-uniform float in_bias;
-
 const float g_opacityThreshold = 1.0 - 1.0 / 255.0;
 
-int clippingPlanesSize;
-vec3 objRayDir;
-mat4 textureToObjMat;
+// VTK::GradientCache::Dec
 
-//VTK::GradientCache::Dec
-
-//VTK::Transfer2D::Dec
+// VTK::Transfer2D::Dec
 
 uniform sampler2D in_opacityTransferFunc_0[1];
 
@@ -180,42 +164,12 @@ vec4 computeGradient(in vec3 texPos,
   vec3 xvec = vec3(in_cellStep[index].x, 0.0, 0.0);
   vec3 yvec = vec3(0.0, in_cellStep[index].y, 0.0);
   vec3 zvec = vec3(0.0, 0.0, in_cellStep[index].z);
-  vec3 g1t = texPos + in_cellStep[index].xyz;
-  vec3 g2t = texPos - in_cellStep[index].xyz;
   g1.x = texture3D(volume, vec3(texPos + xvec))[c];
   g1.y = texture3D(volume, vec3(texPos + yvec))[c];
   g1.z = texture3D(volume, vec3(texPos + zvec))[c];
   g2.x = texture3D(volume, vec3(texPos - xvec))[c];
   g2.y = texture3D(volume, vec3(texPos - yvec))[c];
   g2.z = texture3D(volume, vec3(texPos - zvec))[c];
-
-  for (int i = 0; i < clippingPlanesSize && !g_skip; i = i + 6)
-  {
-    vec4 g1ObjDataPos = textureToObjMat * vec4(g1t, 1.0);
-    vec4 g2ObjDataPos = textureToObjMat * vec4(g2t, 1.0);
-    if (g1ObjDataPos.w != 0.0)
-    {
-      g1ObjDataPos /= g1ObjDataPos.w;
-    }
-    if (g2ObjDataPos.w != 0.0)
-    {
-      g2ObjDataPos /= g2ObjDataPos.w;
-    }
-    vec3 planeOrigin = vec3(in_clippingPlanes[i + 1],
-                            in_clippingPlanes[i + 2],
-                            in_clippingPlanes[i + 3]);
-    vec3 planeNormal = vec3(in_clippingPlanes[i + 4],
-                            in_clippingPlanes[i + 5],
-                            in_clippingPlanes[i + 6]);
-    if (dot(vec3(g1ObjDataPos.xyz - planeOrigin), planeNormal) < 0)
-    {
-      g1 = vec3(1000.0);
-    }
-    if (dot(vec3(g2ObjDataPos.xyz - planeOrigin), planeNormal) < 0)
-    {
-      g2 = vec3(-1000.0);
-    }
-  }
 
   // Apply scale and bias to the fetched values.
   g1 = g1 * in_volume_scale[index][c] + in_volume_bias[index][c];
@@ -286,11 +240,105 @@ vec3 computeRayDirection()
   return normalize(ip_vertexPos.xyz - g_eyePosObj.xyz);
 }
 
-//VTK::Picking::Dec
+// VTK::Picking::Dec
 
-//VTK::RenderToImage::Dec
+// VTK::RenderToImage::Dec
 
-//VTK::DepthPeeling::Dec
+// VTK::DepthPeeling::Dec
+
+uniform float in_scale;
+uniform float in_bias;
+
+/// We support only 8 clipping planes for now
+/// The first value is the size of the data array for clipping
+/// planes (origin, normal)
+uniform float in_clippingPlanes[49];
+
+int clip_numPlanes;
+vec3 clip_rayDirObj;
+mat4 clip_texToObjMat;
+mat4 clip_objToTexMat;
+
+// Tighten the sample range as needed to account for clip planes.
+// Arguments are in texture coordinates.
+// Returns true if the range is at all valid after clipping. If not,
+// the fragment should be discarded.
+bool AdjustSampleRangeForClipping(inout vec3 startPosTex, inout vec3 stopPosTex)
+{
+  vec4 startPosObj = vec4(0.0);
+  {
+    startPosObj = clip_texToObjMat * vec4(startPosTex - g_rayJitter, 1.0);
+    startPosObj = startPosObj / startPosObj.w;
+    startPosObj.w = 1.0;
+  }
+
+  vec4 stopPosObj = vec4(0.0);
+  {
+    stopPosObj = clip_texToObjMat * vec4(stopPosTex, 1.0);
+    stopPosObj = stopPosObj / stopPosObj.w;
+    stopPosObj.w = 1.0;
+  }
+
+  for (int i = 0; i < clip_numPlanes; i = i + 6)
+  {
+    vec3 planeOrigin = vec3(in_clippingPlanes[i + 1],
+                            in_clippingPlanes[i + 2],
+                            in_clippingPlanes[i + 3]);
+    vec3 planeNormal = normalize(vec3(in_clippingPlanes[i + 4],
+                                      in_clippingPlanes[i + 5],
+                                      in_clippingPlanes[i + 6]));
+
+    // Abort if the entire segment is clipped:
+    // (We can do this before adjusting the term point, since it'll
+    // only move further into the clipped area)
+    float startDistance = dot(planeNormal, planeOrigin - startPosObj.xyz);
+    float stopDistance = dot(planeNormal, planeOrigin - stopPosObj.xyz);
+    bool startClipped = startDistance > 0.0;
+    bool stopClipped = stopDistance > 0.0;
+    if (startClipped && stopClipped)
+    {
+      return false;
+    }
+
+    float rayDotNormal = dot(clip_rayDirObj, planeNormal);
+    bool frontFace = rayDotNormal > 0;
+
+    // Move the start position further from the eye if needed:
+    if (frontFace && // Observing from the clipped side (plane's front face)
+        startDistance > 0.0) // Ray-entry lies on the clipped side.
+    {
+      // Scale the point-plane distance to the ray direction and update the
+      // entry point.
+      float rayScaledDist = startDistance / rayDotNormal;
+      startPosObj = vec4(startPosObj.xyz + rayScaledDist * clip_rayDirObj, 1.0);
+      vec4 newStartPosTex = clip_objToTexMat * vec4(startPosObj.xyz, 1.0);
+      newStartPosTex /= newStartPosTex.w;
+      startPosTex = newStartPosTex.xyz;
+      startPosTex += g_rayJitter;
+    }
+
+    // Move the end position closer to the eye if needed:
+    if (!frontFace && // Observing from the unclipped side (plane's back face)
+        stopDistance > 0.0) // Ray-entry lies on the unclipped side.
+    {
+      // Scale the point-plane distance to the ray direction and update the
+      // termination point.
+      float rayScaledDist = stopDistance / rayDotNormal;
+      stopPosObj = vec4(stopPosObj.xyz + rayScaledDist * clip_rayDirObj, 1.0);
+      vec4 newStopPosTex = clip_objToTexMat * vec4(stopPosObj.xyz, 1.0);
+      newStopPosTex /= newStopPosTex.w;
+      stopPosTex = newStopPosTex.xyz;
+    }
+  }
+
+  if (any(greaterThan(startPosTex, in_texMax[0])) ||
+      any(lessThan(startPosTex, in_texMin[0])))
+  {
+    return false;
+  }
+
+  return true;
+}
 
 //////////////////////////////////////////////////////////////////////////////
 ///
@@ -333,6 +381,50 @@ vec4 NDCToWindow(const float xNDC, const float yNDC, const float zNDC)
   return WinCoord;
 }
 
+/**
+ * Clamps the texture coordinate vector @a pos to a new position in the set
+ * { start + i * step }, where i is an integer. If @a ceiling
+ * is true, the sample located further in the direction of @a step is used,
+ * otherwise the sample location closer to the eye is used.
+ */
+vec3 ClampToSampleLocation(vec3 start, vec3 step, vec3 pos, bool ceiling)
+{
+  pos -= g_rayJitter;
+
+  vec3 offset = pos - start;
+  float stepLength = length(step);
+
+  // Scalar projection of offset on step:
+  float dist = dot(offset, step / stepLength);
+  if (dist < 0.) // Don't move before the start position:
+  {
+    return start + g_rayJitter;
+  }
+
+  // Number of steps
+  float steps = dist / stepLength;
+
+  // If we're reeaaaaallly close, just round -- it's likely just numerical noise
+  // and the value should be considered exact.
+  if (abs(mod(steps, 1.)) > 1e-5)
+  {
+    if (ceiling)
+    {
+      steps = ceil(steps);
+    }
+    else
+    {
+      steps = floor(steps);
+    }
+  }
+  else
+  {
+    steps = floor(steps + 0.5);
+  }
+
+  return start + steps * step + g_rayJitter;
+}
+
 //////////////////////////////////////////////////////////////////////////////
 ///
 /// Ray-casting
@@ -372,21 +464,24 @@ void initializeRayCast()
   // we use a fraction of it. The texture coordinate is less than 1 if
   // the reduction factor is less than 1.
   // Device coordinates are between -1 and 1. We need texture
-  // coordinates between 0 and 1. The in_noiseSampler and in_depthSampler
-  // buffers have the original size buffer.
+  // coordinates between 0 and 1. The in_depthSampler
+  // buffer has the original size buffer.
   vec2 fragTexCoord =
     (gl_FragCoord.xy - in_windowLowerLeftCorner) * in_inverseWindowSize;
 
   if (in_useJittering)
   {
-    float jitterValue = texture2D(in_noiseSampler, fragTexCoord).x;
+    float jitterValue =
+      texture2D(in_noiseSampler,
+                gl_FragCoord.xy / textureSize(in_noiseSampler, 0))
+        .x;
     g_rayJitter = g_dirStep * jitterValue;
-    g_dataPos += g_rayJitter;
   }
   else
   {
-    g_dataPos += g_dirStep;
+    g_rayJitter = g_dirStep;
   }
+  g_dataPos += g_rayJitter;
 
   // Flag to deternmine if voxel should be considered for the rendering
   g_skip = false;
@@ -421,18 +516,18 @@ void initializeRayCast()
 
   // Abscissa of the point on the depth buffer along the ray.
   // point in texture coordinates
-  vec4 terminatePoint =
+  vec4 terminatePosTmp =
     WindowToNDC(gl_FragCoord.x, gl_FragCoord.y, l_depthValue.x);
 
   // From normalized device coordinates to eye coordinates.
   // in_projectionMatrix is inversed because of way VT
   // From eye coordinates to texture coordinates
-  terminatePoint = ip_inverseTextureDataAdjusted * in_inverseVolumeMatrix[0] *
-    in_inverseModelViewMatrix * in_inverseProjectionMatrix * terminatePoint;
-  terminatePoint /= terminatePoint.w;
+  terminatePosTmp = ip_inverseTextureDataAdjusted * in_inverseVolumeMatrix[0] *
+    in_inverseModelViewMatrix * in_inverseProjectionMatrix * terminatePosTmp;
+  g_terminatePos = terminatePosTmp.xyz / terminatePosTmp.w;
 
   g_terminatePointMax =
-    length(terminatePoint.xyz - g_dataPos.xyz) / length(g_dirStep);
+    length(g_terminatePos.xyz - g_dataPos.xyz) / length(g_dirStep);
   g_currentT = 0.0;
 
   vec4 tempClip = in_volumeMatrix[0] * vec4(rayDir, 0.0);
@@ -441,97 +536,15 @@ void initializeRayCast()
     tempClip = tempClip / tempClip.w;
     tempClip.w = 1.0;
   }
-  objRayDir = tempClip.xyz;
-  clippingPlanesSize = int(in_clippingPlanes[0]);
-  vec4 objDataPos = vec4(0.0);
-  textureToObjMat = in_volumeMatrix[0] * in_textureDatasetMatrix[0];
+  clip_rayDirObj = normalize(tempClip.xyz);
+  clip_numPlanes = int(in_clippingPlanes[0]);
+  clip_texToObjMat = in_volumeMatrix[0] * in_textureDatasetMatrix[0];
+  clip_objToTexMat =
+    in_inverseTextureDatasetMatrix[0] * in_inverseVolumeMatrix[0];
 
-  vec4 terminatePointObj = textureToObjMat * terminatePoint;
-  if (terminatePointObj.w != 0.0)
-  {
-    terminatePointObj = terminatePointObj / terminatePointObj.w;
-    terminatePointObj.w = 1.0;
-  }
+  // VTK::RenderToImage::Init
 
-  for (int i = 0; i < clippingPlanesSize; i = i + 6)
-  {
-    if (in_useJittering)
-    {
-      objDataPos = textureToObjMat * vec4(g_dataPos - g_rayJitter, 1.0);
-    }
-    else
-    {
-      objDataPos = textureToObjMat * vec4(g_dataPos - g_dirStep, 1.0);
-    }
-    if (objDataPos.w != 0.0)
-    {
-      objDataPos = objDataPos / objDataPos.w;
-      objDataPos.w = 1.0;
-    }
-    vec3 planeOrigin = vec3(in_clippingPlanes[i + 1],
-                            in_clippingPlanes[i + 2],
-                            in_clippingPlanes[i + 3]);
-    vec3 planeNormal = vec3(in_clippingPlanes[i + 4],
-                            in_clippingPlanes[i + 5],
-                            in_clippingPlanes[i + 6]);
-    vec3 normalizedPlaneNormal = normalize(planeNormal);
-
-    float rayDotNormal = dot(objRayDir, normalizedPlaneNormal);
-    bool frontFace = rayDotNormal > 0;
-    float distance = dot(normalizedPlaneNormal, planeOrigin - objDataPos.xyz);
-
-    if (frontFace &&    // Observing from the clipped side (plane's front face)
-        distance > 0.0) // Ray-entry lies on the clipped side.
-    {
-      // Scale the point-plane distance to the ray direction and update the
-      // entry point.
-      float rayScaledDist = distance / rayDotNormal;
-      vec4 newObjDataPos =
-        vec4(objDataPos.xyz + rayScaledDist * objRayDir, 1.0);
-      newObjDataPos = in_inverseTextureDatasetMatrix[0] *
-        in_inverseVolumeMatrix[0] * vec4(newObjDataPos.xyz, 1.0);
-      if (newObjDataPos.w != 0.0)
-      {
-        newObjDataPos /= newObjDataPos.w;
-      }
-      if (in_useJittering)
-      {
-        g_dataPos = newObjDataPos.xyz + g_rayJitter;
-      }
-      else
-      {
-        g_dataPos = newObjDataPos.xyz + g_dirStep;
-      }
-
-      bool stop = any(greaterThan(g_dataPos, in_texMax[0])) ||
-        any(lessThan(g_dataPos, in_texMin[0]));
-      if (stop)
-      {
-        // The ray exits the bounding box before ever intersecting the plane
-        // (only the clipped space is hit).
-        discard;
-      }
-
-      bool behindGeometry = dot(terminatePointObj.xyz - planeOrigin.xyz,
-                                normalizedPlaneNormal) < 0.0;
-      if (behindGeometry)
-      {
-        // Geometry appears in front of the plane.
-        discard;
-      }
-
-      // Update the number of ray marching steps to account for the clipped
-      // entry point ( this is necessary in case the ray hits geometry after
-      // marching behind the plane, given that the number of steps was assumed
-      // to be from the not-clipped entry).
-      g_terminatePointMax =
-        length(terminatePoint.xyz - g_dataPos.xyz) / length(g_dirStep);
-    }
-  }
-
-  //VTK::RenderToImage::Init
-
-  //VTK::DepthPass::Init
+  // VTK::DepthPass::Init
 }
 
 /**
@@ -543,9 +556,22 @@ void initializeRayCast()
  */
 vec4 castRay(const float zStart, const float zEnd)
 {
-  //VTK::DepthPeeling::Ray::Init
+  // VTK::DepthPeeling::Ray::Init
 
-  //VTK::DepthPeeling::Ray::PathCheck
+  // Adjust the ray segment to account for clipping range:
+  if (!AdjustSampleRangeForClipping(g_dataPos.xyz, g_terminatePos.xyz))
+  {
+    return vec4(0.);
+  }
+
+  // Update the number of ray marching steps to account for the clipped entry
+  // point ( this is necessary in case the ray hits geometry after marching
+  // behind the plane, given that the number of steps was assumed to be from the
+  // not-clipped entry).
+  g_terminatePointMax =
+    length(g_terminatePos.xyz - g_dataPos.xyz) / length(g_dirStep);
+
+  // VTK::DepthPeeling::Ray::PathCheck
 
   /// For all samples along the ray
   while (!g_exit)
@@ -553,28 +579,7 @@ vec4 castRay(const float zStart, const float zEnd)
 
     g_skip = false;
 
-    for (int i = 0; i < clippingPlanesSize && !g_skip; i = i + 6)
-    {
-      vec4 objDataPos = textureToObjMat * vec4(g_dataPos, 1.0);
-      if (objDataPos.w != 0.0)
-      {
-        objDataPos /= objDataPos.w;
-      }
-      vec3 planeOrigin = vec3(in_clippingPlanes[i + 1],
-                              in_clippingPlanes[i + 2],
-                              in_clippingPlanes[i + 3]);
-      vec3 planeNormal = vec3(in_clippingPlanes[i + 4],
-                              in_clippingPlanes[i + 5],
-                              in_clippingPlanes[i + 6]);
-      if (dot(vec3(objDataPos.xyz - planeOrigin), planeNormal) < 0 &&
-          dot(objRayDir, planeNormal) < 0)
-      {
-        g_skip = true;
-        g_exit = true;
-      }
-    }
-
-    //VTK::PreComputeGradients::Impl
+    // VTK::PreComputeGradients::Impl
 
     if (!g_skip)
     {
@@ -601,9 +606,9 @@ vec4 castRay(const float zStart, const float zEnd)
       }
     }
 
-    //VTK::RenderToImage::Impl
+    // VTK::RenderToImage::Impl
 
-    //VTK::DepthPass::Impl
+    // VTK::DepthPass::Impl
 
     /// Advance ray
     g_dataPos += g_dirStep;
@@ -635,16 +640,16 @@ vec4 castRay(const float zStart, const float zEnd)
 void finalizeRayCast()
 {
 
-  //VTK::Picking::Exit
+  // VTK::Picking::Exit
 
   g_fragColor.r = g_fragColor.r * in_scale + in_bias * g_fragColor.a;
   g_fragColor.g = g_fragColor.g * in_scale + in_bias * g_fragColor.a;
   g_fragColor.b = g_fragColor.b * in_scale + in_bias * g_fragColor.a;
   fragOutput0 = g_fragColor;
 
-  //VTK::RenderToImage::Exit
+  // VTK::RenderToImage::Exit
 
-  //VTK::DepthPass::Exit
+  // VTK::DepthPass::Exit
 }
 
 //////////////////////////////////////////////////////////////////////////////
