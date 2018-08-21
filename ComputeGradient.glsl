@@ -23,8 +23,8 @@ vec4 computeGradient(in vec3 texPos,
   vec3 g2t = texPos - in_cellStep[index].xyz;
   for (int i = 0; i < clippingPlanesSize && !g_skip; i = i + 6)
   {
-    vec4 g1ObjDataPos = textureToObjMat * vec4(g1t, 1.0);
-    vec4 g2ObjDataPos = textureToObjMat * vec4(g2t, 1.0);
+    vec4 g1ObjDataPos = clip_texToObjMat * vec4(g1t, 1.0);
+    vec4 g2ObjDataPos = clip_texToObjMat * vec4(g2t, 1.0);
     if (g1ObjDataPos.w != 0.0)
     {
       g1ObjDataPos /= g1ObjDataPos.w;

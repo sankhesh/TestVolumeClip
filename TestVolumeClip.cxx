@@ -22,7 +22,7 @@
 #include <vtkVolumeProperty.h>
 #include <vtkXMLImageDataReader.h>
 
-// #include "FragmentShader.h"
+#include "FragmentShader.h"
 #include "ComputeGradient.h"
 
 class vtkBoxCallback : public vtkCommand
@@ -69,7 +69,7 @@ public:
   static vtkCustomInteractorStyle* New();
   vtkTypeMacro(vtkCustomInteractorStyle, vtkInteractorStyleTrackballCamera);
 
-  virtual void OnKeyPress()
+  virtual void OnKeyPress() override
   {
     // Get the keypress
     std::string key = this->Interactor->GetKeySym();
@@ -82,11 +82,12 @@ public:
       }
       else
       {
-        this->Mapper->AddShaderReplacement(vtkShader::Fragment,
-                                           "//VTK::ComputeGradient::Dec",
-                                           true,
-                                           ComputeGradient,
-                                           true);
+        // this->Mapper->AddShaderReplacement(vtkShader::Fragment,
+        //                                    "//VTK::ComputeGradient::Dec",
+        //                                    true,
+        //                                    ComputeGradient,
+        //                                    true);
+        // this->Mapper->SetFragmentShaderCode(FragmentShader);
         this->Replacement = true;
       }
       this->Interactor->Render();
@@ -98,7 +99,7 @@ public:
 
   vtkCustomInteractorStyle()
   {
-    this->Replacement = true;
+    this->Replacement = false;
     this->Mapper = nullptr;
   }
 
@@ -140,6 +141,7 @@ int main(int argc, char* argv[])
   prop->SetColor(ctf);
   prop->SetScalarOpacity(pf);
   prop->SetShade(1);
+  prop->SetClipSurfaceShade(1);
 
   vtkNew<vtkVolume> volume;
   volume->SetMapper(mapper);
@@ -147,11 +149,11 @@ int main(int argc, char* argv[])
 
   vtkOpenGLGPUVolumeRayCastMapper* glMapper =
     vtkOpenGLGPUVolumeRayCastMapper::SafeDownCast(mapper);
-  glMapper->AddShaderReplacement(vtkShader::Fragment,
-                                 "//VTK::ComputeGradient::Dec",
-                                 true,
-                                 ComputeGradient,
-                                 true);
+  // glMapper->AddShaderReplacement(vtkShader::Fragment,
+  //                                "//VTK::ComputeGradient::Dec",
+  //                                true,
+  //                                ComputeGradient,
+  //                                true);
 
   vtkNew<vtkRenderWindow> renWin;
   renWin->SetMultiSamples(0);

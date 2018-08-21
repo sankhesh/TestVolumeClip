@@ -7,7 +7,7 @@ include(${VTK_USE_FILE})
 
 include(${VTK_CMAKE_DIR}/vtkEncodeString.cmake)
 set(shader_files
-  # FragmentShader.glsl
+  FragmentShader.glsl
   ComputeGradient.glsl
 )
 unset(shader_c_files)

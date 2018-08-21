@@ -152,6 +152,16 @@ float computeOpacity(vec4 scalar)
   return texture2D(in_opacityTransferFunc_0[0], vec2(scalar.w, 0)).r;
 }
 
+/// We support only 8 clipping planes for now
+/// The first value is the size of the data array for clipping
+/// planes (origin, normal)
+uniform float in_clippingPlanes[49];
+
+int clip_numPlanes;
+vec3 clip_rayDirObj;
+mat4 clip_texToObjMat;
+mat4 clip_objToTexMat;
+
 // c is short for component
 vec4 computeGradient(in vec3 texPos,
                      in int c,
@@ -171,6 +181,68 @@ vec4 computeGradient(in vec3 texPos,
   g2.y = texture3D(volume, vec3(texPos - yvec))[c];
   g2.z = texture3D(volume, vec3(texPos - zvec))[c];
 
+  // The following block is the code of interest that checks if the neighboring
+  // voxels are within the clipping range.
+  vec3 g1t = texPos + in_cellStep[index].xyz;
+  vec3 g2t = texPos - in_cellStep[index].xyz;
+
+  //for (int i = 0; i < clip_numPlanes && !g_skip; i = i + 6)
+  //{
+  //  vec4 g1ObjDataPos = clip_texToObjMat * vec4(g1t, 1.0);
+  //  vec4 g2ObjDataPos = clip_texToObjMat * vec4(g2t, 1.0);
+  //  vec4 gObjDataPos = clip_texToObjMat * vec4(texPos, 1.0);
+  //  if (gObjDataPos.w != 0.0)
+  //  {
+  //    gObjDataPos /= gObjDataPos.w;
+  //  }
+  //  if (g1ObjDataPos.w != 0.0)
+  //  {
+  //    g1ObjDataPos /= g1ObjDataPos.w;
+  //  }
+  //  if (g2ObjDataPos.w != 0.0)
+  //  {
+  //    g2ObjDataPos /= g2ObjDataPos.w;
+  //  }
+  //  vec3 planeOrigin = vec3(in_clippingPlanes[i + 1],
+  //                          in_clippingPlanes[i + 2],
+  //                          in_clippingPlanes[i + 3]);
+  //  vec3 planeNormal = normalize(vec3(in_clippingPlanes[i + 4],
+  //                          in_clippingPlanes[i + 5],
+  //                          in_clippingPlanes[i + 6]));
+  //  // if (dot(vec3(planeOrigin - gObjDataPos.xyz), planeNormal) < 0)
+  //  // {
+  //  //   return vec4(clip_rayDirObj, -1.0);
+  //  // }
+  //  // if (dot(vec3(planeOrigin - g1ObjDataPos.xyz), planeNormal) < 0)
+  //  // {
+  //  //   // Clipping required. Set the gradient to a high value
+  //  //   return vec4(planeNormal, -1.0);
+  //  //   g1 = vec3(1000.0);
+  //  // }
+  //  // if (dot(vec3(planeOrigin - g2ObjDataPos.xyz), planeNormal) < 0)
+  //  // {
+  //  //   // Clipping required. Set the gradient to a high value
+  //  //   g2 = vec3(-1000.0);
+  //  //   return vec4(normalize(clip_rayDirObj), -1.0);
+  //  // }
+  //  // if (dot(planeOrigin - g1ObjDataPos.xyz, planeNormal) < 0 &&
+  //  //     dot(planeOrigin - g2ObjDataPos.xyz, planeNormal) > 0)
+  //  // {
+  //  //   return vec4(clip_rayDirObj, -1.0);
+  //  // }
+  //  // if (dot(planeOrigin - g1ObjDataPos.xyz, planeNormal) > 0 &&
+  //  //     dot(planeOrigin - g2ObjDataPos.xyz, planeNormal) < 0)
+  //  // {
+  //  //   return vec4(clip_rayDirObj, -1.0);
+  //  // }
+  //  if (dot(planeOrigin - g1ObjDataPos.xyz, planeNormal) > 0 ||
+  //      dot(planeOrigin - g2ObjDataPos.xyz, planeNormal) > 0)
+  //  {
+  //    return vec4(clip_rayDirObj, -1.0);
+  //  }
+  //}
+
+
   // Apply scale and bias to the fetched values.
   g1 = g1 * in_volume_scale[index][c] + in_volume_bias[index][c];
   g2 = g2 * in_volume_scale[index][c] + in_volume_bias[index][c];
@@ -184,10 +256,18 @@ vec4 computeGradient(in vec3 texPos,
 
 uniform sampler2D[1];
 
-vec4 computeLighting(vec4 color, int component)
+vec4 computeLighting(vec4 color, int component, bool clippedPos, vec3 clipNormal)
 {
   vec4 finalColor = vec4(0.0); // Compute gradient function only once
-  vec4 gradient = computeGradient(g_dataPos, component, in_volume[0], 0);
+  vec4 gradient;
+  if (clippedPos && color.w > 0)
+  {
+    gradient = vec4(clipNormal, -1);
+  }
+  else
+  {
+    gradient = computeGradient(g_dataPos, component, in_volume[0], 0);
+  }
 
   vec3 diffuse = vec3(0.0);
   vec3 specular = vec3(0.0);
@@ -222,17 +302,19 @@ vec4 computeLighting(vec4 color, int component)
   // for now as it is causing the old mapper tests to fail
   finalColor.xyz = in_ambient[component] * color.rgb + diffuse + specular;
   finalColor.a = color.a;
+  //test
+  // finalColor.xyz = normal.xyz;
   return finalColor;
 }
 
 uniform sampler2D in_colorTransferFunc_0[1];
 
-vec4 computeColor(vec4 scalar, float opacity)
+vec4 computeColor(vec4 scalar, float opacity, bool clippedPos, vec3 normal)
 {
   return computeLighting(
     vec4(texture2D(in_colorTransferFunc_0[0], vec2(scalar.w, 0.0)).xyz,
          opacity),
-    0);
+    0, clippedPos, normal);
 }
 
 vec3 computeRayDirection()
@@ -249,21 +331,11 @@ vec3 computeRayDirection()
 uniform float in_scale;
 uniform float in_bias;
 
-/// We support only 8 clipping planes for now
-/// The first value is the size of the data array for clipping
-/// planes (origin, normal)
-uniform float in_clippingPlanes[49];
-
-int clip_numPlanes;
-vec3 clip_rayDirObj;
-mat4 clip_texToObjMat;
-mat4 clip_objToTexMat;
-
 // Tighten the sample range as needed to account for clip planes.
 // Arguments are in texture coordinates.
 // Returns true if the range is at all valid after clipping. If not,
 // the fragment should be discarded.
-bool AdjustSampleRangeForClipping(inout vec3 startPosTex, inout vec3 stopPosTex)
+bool AdjustSampleRangeForClipping(inout vec3 startPosTex, inout vec3 stopPosTex, out vec3 normal)
 {
   vec4 startPosObj = vec4(0.0);
   {
@@ -315,6 +387,7 @@ bool AdjustSampleRangeForClipping(inout vec3 startPosTex, inout vec3 stopPosTex)
       newStartPosTex /= newStartPosTex.w;
       startPosTex = newStartPosTex.xyz;
       startPosTex += g_rayJitter;
+      normal = planeNormal;
     }
 
     // Move the end position closer to the eye if needed:
@@ -558,10 +631,18 @@ vec4 castRay(const float zStart, const float zEnd)
 {
   // VTK::DepthPeeling::Ray::Init
 
+  vec3 tmp_dataPos = g_dataPos;
+  vec3 tmp_normal;
   // Adjust the ray segment to account for clipping range:
-  if (!AdjustSampleRangeForClipping(g_dataPos.xyz, g_terminatePos.xyz))
+  if (!AdjustSampleRangeForClipping(g_dataPos.xyz, g_terminatePos.xyz, tmp_normal))
   {
     return vec4(0.);
+  }
+
+  bool clippedPos = false;
+  if (g_dataPos != tmp_dataPos)
+  {
+    clippedPos = true;
   }
 
   // Update the number of ray marching steps to account for the clipped entry
@@ -590,7 +671,7 @@ vec4 castRay(const float zStart, const float zEnd)
       g_srcColor.a = computeOpacity(scalar);
       if (g_srcColor.a > 0.0)
       {
-        g_srcColor = computeColor(scalar, g_srcColor.a);
+        g_srcColor = computeColor(scalar, g_srcColor.a, clippedPos, tmp_normal);
         // Opacity calculation using compositing:
         // Here we use front to back compositing scheme whereby
         // the current sample value is multiplied to the
