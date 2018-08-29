@@ -10,6 +10,7 @@
 #include <vtkNew.h>
 #include <vtkObjectFactory.h>
 #include <vtkOpenGLGPUVolumeRayCastMapper.h>
+#include <vtkPNGWriter.h>
 #include <vtkPiecewiseFunction.h>
 #include <vtkPlane.h>
 #include <vtkPlaneCollection.h>
@@ -20,10 +21,11 @@
 #include <vtkRenderer.h>
 #include <vtkVolume.h>
 #include <vtkVolumeProperty.h>
+#include <vtkWindowToImageFilter.h>
 #include <vtkXMLImageDataReader.h>
 
-#include "FragmentShader.h"
 #include "ComputeGradient.h"
+#include "FragmentShader.h"
 
 class vtkBoxCallback : public vtkCommand
 {
@@ -73,6 +75,34 @@ public:
   {
     // Get the keypress
     std::string key = this->Interactor->GetKeySym();
+    if (key == "s")
+    {
+      bool e = BoxWidget->GetEnabled();
+      BoxWidget->SetEnabled(0);
+      Property->SetUseClippedVoxelIntensity(0);
+      this->Interactor->Render();
+      vtkNew<vtkWindowToImageFilter> f;
+      f->SetInput(this->GetInteractor()->GetRenderWindow());
+      vtkNew<vtkPNGWriter> w;
+      w->SetFileName("RegularShading.png");
+      w->SetInputConnection(f->GetOutputPort());
+      w->Write();
+      Property->SetUseClippedVoxelIntensity(1);
+      this->Interactor->Render();
+      vtkNew<vtkWindowToImageFilter> f1;
+      f1->SetInput(this->GetInteractor()->GetRenderWindow());
+      w->SetInputConnection(f1->GetOutputPort());
+      w->SetFileName("ClippedVoxelIntensityShading.png");
+      w->Write();
+      BoxWidget->SetEnabled(e);
+      Property->SetUseClippedVoxelIntensity(0);
+      this->Interactor->Render();
+    }
+    if (key == "b")
+    {
+      BoxWidget->SetEnabled(!BoxWidget->GetEnabled());
+      this->Interactor->Render();
+    }
     if (key == "c")
     {
       if (this->Replacement)
@@ -87,7 +117,7 @@ public:
         //                                    true,
         //                                    ComputeGradient,
         //                                    true);
-        // this->Mapper->SetFragmentShaderCode(FragmentShader);
+        this->Mapper->SetFragmentShaderCode(FragmentShader);
         this->Replacement = true;
       }
       this->Interactor->Render();
@@ -104,6 +134,8 @@ public:
   }
 
   vtkOpenGLGPUVolumeRayCastMapper* Mapper;
+  vtkBoxWidget2* BoxWidget;
+  vtkVolumeProperty* Property;
   bool Replacement;
 };
 vtkStandardNewMacro(vtkCustomInteractorStyle);
@@ -141,7 +173,9 @@ int main(int argc, char* argv[])
   prop->SetColor(ctf);
   prop->SetScalarOpacity(pf);
   prop->SetShade(1);
-  prop->SetClipSurfaceShade(1);
+  // prop->SetUseClippedVoxelIntensity(1);
+  prop->SetClippedVoxelIntensity(-1000.0);
+  // prop->SetClipSurfaceShade(1);
 
   vtkNew<vtkVolume> volume;
   volume->SetMapper(mapper);
@@ -185,6 +219,9 @@ int main(int argc, char* argv[])
   ren->GetActiveCamera()->Zoom(1.5);
   ren->GetActiveCamera()->Roll(-70);
   ren->GetActiveCamera()->Azimuth(90);
+
+  style->BoxWidget = boxWidget.GetPointer();
+  style->Property = prop.GetPointer();
 
   // Depth Peeling
   // renWin->SetAlphaBitPlanes(true);
